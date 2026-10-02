@@ -1,0 +1,182 @@
+services:
+
+  # =====================================================
+  # WEB SERVER
+  # =====================================================
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: web-server
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      # Enable after configuring SSL:
+      # - "443:443"
+
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    networks:
+      - web-network
+
+
+  # =====================================================
+  # APPLICATION SERVER
+  # =====================================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: application-server
+    restart: unless-stopped
+
+    expose:
+      - "8080"
+
+    environment:
+      APP_ENV: production
+      PORT: 8080
+
+      # -------------------------
+      # MySQL
+      # -------------------------
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
+      # -------------------------
+      # MongoDB
+      # -------------------------
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      MONGO_DATABASE: appmongo
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+
+    depends_on:
+
+      mysql:
+        condition: service_healthy
+
+      mongodb:
+        condition: service_healthy
+
+    networks:
+      - web-network
+      - database-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+        ]
+
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+
+  # =====================================================
+  # MYSQL DATABASE
+  # =====================================================
+  mysql:
+    image: mysql:8.4
+    container_name: mysql-db
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+    expose:
+      - "3306"
+
+    networks:
+      - database-network
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent"
+        ]
+
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+
+  # =====================================================
+  # MONGODB DATABASE
+  # =====================================================
+  mongodb:
+    image: mongo:8.0
+    container_name: mongodb
+    restart: unless-stopped
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: appmongo
+
+    volumes:
+      - mongodb-data:/data/db
+
+    expose:
+      - "27017"
+
+    networks:
+      - database-network
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1"
+        ]
+
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+
+# =====================================================
+# NETWORKS
+# =====================================================
+networks:
+
+  web-network:
+    driver: bridge
+
+  database-network:
+    driver: bridge
+
+
+# =====================================================
+# PERSISTENT STORAGE
+# =====================================================
+volumes:
+
+  mysql-data:
+    driver: local
+
+  mongodb-data:
+    driver: local
